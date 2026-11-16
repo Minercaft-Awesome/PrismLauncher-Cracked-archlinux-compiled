@@ -14,12 +14,11 @@ jobs:
       options: --user root
 
     steps:
-      - name: Initialize Pacman & Install All Dependencies (With Retry Fallback)
+      - name: Initialize Pacman & Install All Dependencies
         run: |
           pacman-key --init
           pacman-key --populate archlinux
 
-          # Fallback loop: retry pacman up to 10 times in case an Arch mirror drops or times out
           for i in $(seq 1 10); do
             echo "Attempt $i/10: Installing PrismLauncher Arch dependencies..."
             pacman -Syu --noconfirm --needed \
@@ -45,11 +44,11 @@ jobs:
               mesa \
               libglvnd \
               jdk21-openjdk && break
-            echo "Pacman failed on attempt $i, refreshing mirrors and retrying in 5s..."
+            echo "Pacman failed on attempt $i, retrying in 5s..."
             sleep 5
           done
 
-      - name: Checkout Forked Repository & Submodules (With Retry Fallback)
+      - name: Checkout Forked Repository
         uses: actions/checkout@v4
         with:
           submodules: false
@@ -57,6 +56,7 @@ jobs:
 
       - name: Fetch Git Submodules Safely
         run: |
+          git config --global --add safe.directory '*'
           for i in $(seq 1 10); do
             echo "Attempt $i/10: Fetching git submodules..."
             git submodule update --init --recursive && break
@@ -64,22 +64,22 @@ jobs:
             sleep 5
           done
 
-      - name: Configure & Compile with Ninja (With Fallback to Single-Core Make)
+      - name: Configure & Compile with Ninja
         run: |
           useradd -m builder || true
           chown -R builder:builder .
 
           su builder -c '
             set -e
+            git config --global --add safe.directory "*"
             mkdir -p build && cd build
 
-            # Primary configure using Ninja + System Libraries
             if ! cmake .. -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr \
               -DLauncher_BUILD_PLATFORM=archlinux \
               -DLauncher_QT_VERSION_MAJOR=6; then
-              echo "Ninja configure failed, falling back to standard Unix Makefiles..."
+              echo "Ninja configure failed, falling back to Unix Makefiles..."
               rm -rf *
               cmake .. \
                 -DCMAKE_BUILD_TYPE=Release \
@@ -88,7 +88,6 @@ jobs:
                 -DLauncher_QT_VERSION_MAJOR=6
             fi
 
-            # Primary multi-core compile with fallback to 2 cores if RAM spikes
             cmake --build . -j$(nproc) || cmake --build . -j2 || cmake --build . -j1
           '
 
