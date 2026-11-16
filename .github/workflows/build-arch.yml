@@ -43,10 +43,12 @@ jobs:
               hicolor-icon-theme \
               mesa \
               libglvnd \
-              jdk21-openjdk && break
+              jdk17-openjdk && break
             echo "Pacman failed on attempt $i, retrying in 5s..."
             sleep 5
           done
+
+          archlinux-java set java-17-openjdk || true
 
       - name: Checkout Forked Repository
         uses: actions/checkout@v4
@@ -72,20 +74,27 @@ jobs:
           su builder -c '
             set -e
             git config --global --add safe.directory "*"
+            export JAVA_HOME=/usr/lib/jvm/java-17-openjdk
+            export PATH="$JAVA_HOME/bin:$PATH"
+
             mkdir -p build && cd build
 
             if ! cmake .. -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DCMAKE_INSTALL_PREFIX=/usr \
               -DLauncher_BUILD_PLATFORM=archlinux \
-              -DLauncher_QT_VERSION_MAJOR=6; then
+              -DLauncher_QT_VERSION_MAJOR=6 \
+              -DJava_JAVA_EXECUTABLE=/usr/lib/jvm/java-17-openjdk/bin/java \
+              -DJava_JAVAC_EXECUTABLE=/usr/lib/jvm/java-17-openjdk/bin/javac; then
               echo "Ninja configure failed, falling back to Unix Makefiles..."
               rm -rf *
               cmake .. \
                 -DCMAKE_BUILD_TYPE=Release \
                 -DCMAKE_INSTALL_PREFIX=/usr \
                 -DLauncher_BUILD_PLATFORM=archlinux \
-                -DLauncher_QT_VERSION_MAJOR=6
+                -DLauncher_QT_VERSION_MAJOR=6 \
+                -DJava_JAVA_EXECUTABLE=/usr/lib/jvm/java-17-openjdk/bin/java \
+                -DJava_JAVAC_EXECUTABLE=/usr/lib/jvm/java-17-openjdk/bin/javac
             fi
 
             cmake --build . -j$(nproc) || cmake --build . -j2 || cmake --build . -j1
