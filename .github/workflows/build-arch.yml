@@ -2,6 +2,9 @@ name: Build Arch Package
 
 on:
   workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-arch.yml'
 
 jobs:
   build-arch:
@@ -9,31 +12,95 @@ jobs:
     container:
       image: archlinux:base-devel
       options: --user root
+
     steps:
-      - name: Initialize Pacman and Install Dependencies
+      - name: Initialize Pacman & Install All Dependencies (With Retry Fallback)
         run: |
           pacman-key --init
-          pacman -Syu --noconfirm git cmake extra-cmake-modules qt6-base qt6-5compat qt6-networkauth qt6-svg quazip-qt6 cmark tomlplusplus zlib jdk21-openjdk scdoc gamemode
+          pacman-key --populate archlinux
 
-      - name: Clone Forked Repository
+          # Fallback loop: retry pacman up to 10 times in case an Arch mirror drops or times out
+          for i in $(seq 1 10); do
+            echo "Attempt $i/10: Installing PrismLauncher Arch dependencies..."
+            pacman -Syu --noconfirm --needed \
+              git \
+              cmake \
+              ninja \
+              extra-cmake-modules \
+              qt6-base \
+              qt6-5compat \
+              qt6-networkauth \
+              qt6-svg \
+              qt6-imageformats \
+              quazip-qt6 \
+              cmark \
+              tomlplusplus \
+              zlib \
+              libarchive \
+              qrencode \
+              gamemode \
+              vulkan-headers \
+              scdoc \
+              hicolor-icon-theme \
+              mesa \
+              libglvnd \
+              jdk21-openjdk && break
+            echo "Pacman failed on attempt $i, refreshing mirrors and retrying in 5s..."
+            sleep 5
+          done
+
+      - name: Checkout Forked Repository & Submodules (With Retry Fallback)
         uses: actions/checkout@v4
         with:
-          submodules: recursive
+          submodules: false
+          fetch-depth: 0
 
-      - name: Build Native Arch Package
+      - name: Fetch Git Submodules Safely
         run: |
-          useradd -m builder
+          for i in $(seq 1 10); do
+            echo "Attempt $i/10: Fetching git submodules..."
+            git submodule update --init --recursive && break
+            echo "Submodule fetch failed, retrying in 5s..."
+            sleep 5
+          done
+
+      - name: Configure & Compile with Ninja (With Fallback to Single-Core Make)
+        run: |
+          useradd -m builder || true
           chown -R builder:builder .
+
           su builder -c '
+            set -e
             mkdir -p build && cd build
-            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DLauncher_BUILD_PLATFORM=archlinux
-            cmake --build . -j$(nproc)
+
+            # Primary configure using Ninja + System Libraries
+            if ! cmake .. -G Ninja \
+              -DCMAKE_BUILD_TYPE=Release \
+              -DCMAKE_INSTALL_PREFIX=/usr \
+              -DLauncher_BUILD_PLATFORM=archlinux \
+              -DLauncher_QT_VERSION_MAJOR=6; then
+              echo "Ninja configure failed, falling back to standard Unix Makefiles..."
+              rm -rf *
+              cmake .. \
+                -DCMAKE_BUILD_TYPE=Release \
+                -DCMAKE_INSTALL_PREFIX=/usr \
+                -DLauncher_BUILD_PLATFORM=archlinux \
+                -DLauncher_QT_VERSION_MAJOR=6
+            fi
+
+            # Primary multi-core compile with fallback to 2 cores if RAM spikes
+            cmake --build . -j$(nproc) || cmake --build . -j2 || cmake --build . -j1
           '
+
+      - name: Package Compiled Binaries
+        run: |
           DESTDIR="$PWD/pkg" cmake --install build
           tar -cJf prismlauncher-cracked-arch.tar.xz -C pkg .
+          ls -lh prismlauncher-cracked-arch.tar.xz
 
       - name: Upload Compiled Archive
         uses: actions/upload-artifact@v4
         with:
           name: prismlauncher-cracked-arch
           path: prismlauncher-cracked-arch.tar.xz
+          retention-days: 30
