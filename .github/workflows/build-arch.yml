@@ -1,0 +1,39 @@
+name: Build Arch Package
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build-arch:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:base-devel
+      options: --user root
+    steps:
+      - name: Initialize Pacman and Install Dependencies
+        run: |
+          pacman-key --init
+          pacman -Syu --noconfirm git cmake extra-cmake-modules qt6-base qt6-5compat qt6-networkauth qt6-svg quazip-qt6 cmark tomlplusplus zlib jdk21-openjdk scdoc gamemode
+
+      - name: Clone Forked Repository
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Build Native Arch Package
+        run: |
+          useradd -m builder
+          chown -R builder:builder .
+          su builder -c '
+            mkdir -p build && cd build
+            cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DLauncher_BUILD_PLATFORM=archlinux
+            cmake --build . -j$(nproc)
+          '
+          DESTDIR="$PWD/pkg" cmake --install build
+          tar -cJf prismlauncher-cracked-arch.tar.xz -C pkg .
+
+      - name: Upload Compiled Archive
+        uses: actions/upload-artifact@v4
+        with:
+          name: prismlauncher-cracked-arch
+          path: prismlauncher-cracked-arch.tar.xz
